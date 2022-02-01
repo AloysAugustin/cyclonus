@@ -3,11 +3,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"strings"
+
 	"github.com/mattfenwick/cyclonus/pkg/connectivity/probe"
 	"github.com/mattfenwick/cyclonus/pkg/generator"
 	"github.com/mattfenwick/cyclonus/pkg/linter"
-	"io/ioutil"
-	"strings"
 
 	"github.com/mattfenwick/cyclonus/pkg/kube"
 	"github.com/mattfenwick/cyclonus/pkg/kube/netpol"
@@ -242,7 +243,7 @@ func ProbeSyntheticConnectivity(explainedPolicies *matcher.Policy, modelPath str
 		// run probes
 		for _, probeConfig := range config.Probes {
 			probeResult := probe.NewSimulatedRunner(explainedPolicies, jobBuilder).
-				RunProbeForConfig(generator.NewProbeConfig(probeConfig.Port, probeConfig.Protocol, generator.ProbeModeServiceName), config.Resources)
+				RunProbeForConfig(generator.NewProbeConfig(probeConfig.Port, probeConfig.Protocol, generator.ProbeModeServiceName), config.Resources, nil)
 
 			logrus.Infof("probe on port %s, protocol %s", probeConfig.Port.String(), probeConfig.Protocol)
 
@@ -294,7 +295,7 @@ func ProbeSyntheticConnectivity(explainedPolicies *matcher.Policy, modelPath str
 	}
 
 	simRunner := probe.NewSimulatedRunner(explainedPolicies, &probe.JobBuilder{TimeoutSeconds: 10})
-	simulatedProbe := simRunner.RunProbeForConfig(generator.ProbeAllAvailable, resources)
+	simulatedProbe := simRunner.RunProbeForConfig(generator.ProbeAllAvailable, resources, nil)
 	fmt.Printf("Ingress:\n%s\n", simulatedProbe.RenderIngress())
 	fmt.Printf("Egress:\n%s\n", simulatedProbe.RenderEgress())
 	fmt.Printf("Combined:\n%s\n\n\n", simulatedProbe.RenderTable())
