@@ -2,11 +2,12 @@ package probe
 
 import (
 	"fmt"
-	"github.com/mattfenwick/cyclonus/pkg/matcher"
-	v1 "k8s.io/api/core/v1"
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/mattfenwick/cyclonus/pkg/matcher"
+	v1 "k8s.io/api/core/v1"
 )
 
 type Jobs struct {
@@ -27,6 +28,8 @@ func (jr *JobResult) Key() string {
 }
 
 type Job struct {
+	Expected JobResult
+
 	FromKey             string
 	FromNamespace       string
 	FromNamespaceLabels map[string]string

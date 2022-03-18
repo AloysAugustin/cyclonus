@@ -1,6 +1,8 @@
 package probe
 
 import (
+	"fmt"
+
 	"github.com/mattfenwick/cyclonus/pkg/generator"
 	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
@@ -11,17 +13,17 @@ type JobBuilder struct {
 	TimeoutSeconds int
 }
 
-func (j *JobBuilder) GetJobsForProbeConfig(resources *Resources, config *generator.ProbeConfig) *Jobs {
+func (j *JobBuilder) GetJobsForProbeConfig(resources *Resources, config *generator.ProbeConfig, sim *Table) *Jobs {
 	if config.AllAvailable {
-		return j.GetJobsAllAvailableServers(resources, config.Mode)
+		return j.GetJobsAllAvailableServers(resources, config.Mode, sim)
 	} else if config.PortProtocol != nil {
-		return j.GetJobsForNamedPortProtocol(resources, config.PortProtocol.Port, config.PortProtocol.Protocol, config.Mode)
+		return j.GetJobsForNamedPortProtocol(resources, config.PortProtocol.Port, config.PortProtocol.Protocol, config.Mode, sim)
 	} else {
 		panic(errors.Errorf("invalid ProbeConfig %+v", config))
 	}
 }
 
-func (j *JobBuilder) GetJobsForNamedPortProtocol(resources *Resources, port intstr.IntOrString, protocol v1.Protocol, mode generator.ProbeMode) *Jobs {
+func (j *JobBuilder) GetJobsForNamedPortProtocol(resources *Resources, port intstr.IntOrString, protocol v1.Protocol, mode generator.ProbeMode, sim *Table) *Jobs {
 	jobs := &Jobs{}
 	for _, podFrom := range resources.Pods {
 		for _, podTo := range resources.Pods {
@@ -43,6 +45,10 @@ func (j *JobBuilder) GetJobsForNamedPortProtocol(resources *Resources, port ints
 				ResolvedPortName:    "",
 				Protocol:            protocol,
 				TimeoutSeconds:      j.TimeoutSeconds,
+			}
+
+			if sim != nil {
+				job.Expected = *sim.Get(job.FromKey, job.ToKey).JobResults[fmt.Sprintf("%s/%d", job.Protocol, job.ResolvedPort)]
 			}
 
 			switch port.Type {
@@ -74,12 +80,12 @@ func (j *JobBuilder) GetJobsForNamedPortProtocol(resources *Resources, port ints
 	return jobs
 }
 
-func (j *JobBuilder) GetJobsAllAvailableServers(resources *Resources, mode generator.ProbeMode) *Jobs {
+func (j *JobBuilder) GetJobsAllAvailableServers(resources *Resources, mode generator.ProbeMode, sim *Table) *Jobs {
 	var jobs []*Job
 	for _, podFrom := range resources.Pods {
 		for _, podTo := range resources.Pods {
 			for _, contTo := range podTo.Containers {
-				jobs = append(jobs, &Job{
+				job := &Job{
 					FromKey:             podFrom.PodString().String(),
 					FromNamespace:       podFrom.Namespace,
 					FromNamespaceLabels: resources.Namespaces[podFrom.Namespace],
@@ -98,7 +104,12 @@ func (j *JobBuilder) GetJobsAllAvailableServers(resources *Resources, mode gener
 					ResolvedPortName:    contTo.PortName,
 					Protocol:            contTo.Protocol,
 					TimeoutSeconds:      j.TimeoutSeconds,
-				})
+				}
+				if sim != nil {
+					job.Expected = *sim.Get(job.FromKey, job.ToKey).JobResults[fmt.Sprintf("%s/%d", job.Protocol, job.ResolvedPort)]
+				}
+				jobs = append(jobs, job)
+
 			}
 		}
 	}

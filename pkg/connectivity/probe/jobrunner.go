@@ -1,13 +1,14 @@
 package probe
 
 import (
+	"strings"
+
 	"github.com/mattfenwick/cyclonus/pkg/generator"
 	"github.com/mattfenwick/cyclonus/pkg/kube"
 	"github.com/mattfenwick/cyclonus/pkg/matcher"
 	"github.com/mattfenwick/cyclonus/pkg/utils"
 	"github.com/mattfenwick/cyclonus/pkg/worker"
 	"github.com/sirupsen/logrus"
-	"strings"
 )
 
 type Runner struct {
@@ -27,12 +28,12 @@ func NewKubeBatchRunner(kubernetes kube.IKubernetes, workers int, jobBuilder *Jo
 	return &Runner{JobRunner: NewKubeBatchJobRunner(kubernetes, workers), JobBuilder: jobBuilder}
 }
 
-func (p *Runner) RunProbeForConfig(probeConfig *generator.ProbeConfig, resources *Resources) *Table {
-	return NewTableFromJobResults(resources, p.runProbe(p.JobBuilder.GetJobsForProbeConfig(resources, probeConfig)))
+func (p *Runner) RunProbeForConfig(probeConfig *generator.ProbeConfig, resources *Resources, sim *Table) *Table {
+	return NewTableFromJobResults(resources, p.runProbe(p.JobBuilder.GetJobsForProbeConfig(resources, probeConfig, sim), sim))
 }
 
-func (p *Runner) runProbe(jobs *Jobs) []*JobResult {
-	resultSlice := p.JobRunner.RunJobs(jobs.Valid)
+func (p *Runner) runProbe(jobs *Jobs, sim *Table) []*JobResult {
+	resultSlice := p.JobRunner.RunJobs(jobs.Valid, sim)
 
 	invalidPP := ConnectivityInvalidPortProtocol
 	unknown := ConnectivityUnknown
@@ -59,14 +60,14 @@ func (p *Runner) runProbe(jobs *Jobs) []*JobResult {
 }
 
 type JobRunner interface {
-	RunJobs(job []*Job) []*JobResult
+	RunJobs(job []*Job, sim *Table) []*JobResult
 }
 
 type SimulatedJobRunner struct {
 	Policies *matcher.Policy
 }
 
-func (s *SimulatedJobRunner) RunJobs(jobs []*Job) []*JobResult {
+func (s *SimulatedJobRunner) RunJobs(jobs []*Job, _ *Table) []*JobResult {
 	results := make([]*JobResult, len(jobs))
 	for i, job := range jobs {
 		results[i] = s.RunJob(job)
@@ -99,7 +100,7 @@ type KubeJobRunner struct {
 	Workers    int
 }
 
-func (k *KubeJobRunner) RunJobs(jobs []*Job) []*JobResult {
+func (k *KubeJobRunner) RunJobs(jobs []*Job, sim *Table) []*JobResult {
 	size := len(jobs)
 	jobsChan := make(chan *Job, size)
 	resultsChan := make(chan *JobResult, size)
@@ -140,9 +141,20 @@ func probeConnectivity(k8s kube.IKubernetes, job *Job) (Connectivity, string) {
 		logrus.Errorf("unable to set up command %s: %+v", commandDebugString, err)
 		return ConnectivityCheckFailed, commandDebugString
 	}
+
 	if commandErr != nil {
-		logrus.Debugf("unable to run command %s: %+v", commandDebugString, commandErr)
+		if job.Expected.Combined == ConnectivityAllowed {
+			logrus.Errorf("Job failed but should have worked\nunable to run command %s: %v\nstdout: %s\nstderr: %s\njob: %+v",
+				commandDebugString, commandErr, stdout, stderr, job)
+		} else {
+			logrus.Debugf("unable to run command %s: %+v", commandDebugString, commandErr)
+		}
 		return ConnectivityBlocked, commandDebugString
+	}
+
+	if job.Expected.Combined == ConnectivityBlocked {
+		logrus.Errorf("Job worked but should have failed\ncommand %s: %v\nstdout: %s\nstderr: %s\njob: %+v",
+			commandDebugString, commandErr, stdout, stderr, job)
 	}
 	return ConnectivityAllowed, commandDebugString
 }
@@ -156,7 +168,7 @@ func NewKubeBatchJobRunner(k8s kube.IKubernetes, workers int) *KubeBatchJobRunne
 	return &KubeBatchJobRunner{Client: &worker.Client{Kubernetes: k8s}, Workers: workers}
 }
 
-func (k *KubeBatchJobRunner) RunJobs(jobs []*Job) []*JobResult {
+func (k *KubeBatchJobRunner) RunJobs(jobs []*Job, _ *Table) []*JobResult {
 	jobMap := map[string]*Job{}
 
 	// 1. batch up jobs
